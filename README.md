@@ -8,4 +8,4 @@ A Spicetify extension that displays synced lyrics in customizable layouts for Sp
 - Adjustable fonts, alignment, and styles
 - Optimized for performance mode
 
-[PREVIEW](screenshot.png)
+![PREVIEW](screenshot.png)
