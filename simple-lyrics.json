@@ -1,0 +1,9 @@
+{
+  "name": "Simple Lyrics",
+  "description": "Displays synced lyrics in customizable layouts for Spotify using Spicetify.",
+  "author": "AFcoder10",
+  "version": "1.0.0",
+  "main": "simple-lyrics.js",
+  "preview": "screenshot.png",
+  "tags": ["lyrics", "spotify", "visualization"]
+}
