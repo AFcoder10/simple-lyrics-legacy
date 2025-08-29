@@ -1,6 +1,6 @@
 // @ts-check
 // NAME: Lyrics Plus
-// AUTHOR: Gemini
+// AUTHOR: Aditya
 // DESCRIPTION: Fetches and displays real-time animated lyrics from a dedicated source in a full-screen UI with configurable settings and a performance mode.
 
 (async function lyricsPlus() {
