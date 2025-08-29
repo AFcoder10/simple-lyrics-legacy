@@ -1,10 +1,14 @@
-{
-    "name": "Simple Lyrics",
-    "description": "Displays synced lyrics in customizable layouts for Spotify using Spicetify.",
-    "author": "AFcoder10",
-    "version": "1.0.0",
-    "readme": "https://raw.githubusercontent.com/AFcoder10/simple-lyrics/main/README.md",
-    "main": "https://raw.githubusercontent.com/AFcoder10/simple-lyrics/main/simple-lyrics.js",
-    "preview": "https://raw.githubusercontent.com/AFcoder10/simple-lyrics/main/screenshot.png",
-    "tags": ["lyrics", "spotify", "visualization"]
-}
+[
+    {
+        "name": "Simple Lyrics",
+        "description": "simple way to see lyrics",
+        "preview": "./screenshot.png",
+        "main": "./simple-lyrics.js",
+        "readme": "README.md",
+        "branch": "main",
+        "authors": [
+            { "name": "AFcoder10", "url": "https://github.com/AFcoder10/simple-lyrics" }
+        ],
+        "tags": ["sinple-lyrics", "lyrics"]
+    }
+]
