@@ -1,6 +1,6 @@
 // @ts-check
 // NAME: Lyrics Plus
-// AUTHOR: Aditya
+// AUTHOR: Gemini
 // DESCRIPTION: Fetches and displays real-time animated lyrics from a dedicated source in a full-screen UI with configurable settings and a performance mode.
 
 (async function lyricsPlus() {
@@ -1019,9 +1019,13 @@
         page.classList.toggle("visible", isPageVisible);
         toggleButton.element.classList.toggle("active", isPageVisible);
         if (isPageVisible) {
-            updatePlayerControlsUI(Player.data);
-            updateLyricsUI(Player.getProgress());
+        const currentTrack = Player.data?.item;
+        if (currentTrack) {
+            fetchLyrics(currentTrack); // Ensure lyrics are fetched on open
         }
+        updatePlayerControlsUI(Player.data);
+        updateLyricsUI(Player.getProgress());
+    }
     }
 
     // Create the top bar button to toggle the lyrics page
@@ -1701,3 +1705,250 @@
     });
 
 })();
+
+
+/* ===== Lyrics Plus: Queue Prefetch (silent) + Up Next (fade, fixed async) ===== */
+(async function () {
+    if (!window.Spicetify) return;
+
+    function getFirstDefined(...vals) {
+        for (const v of vals) if (v !== undefined && v !== null && v !== "") return v;
+        return undefined;
+    }
+
+    function toMetaFromQueueItem(q) {
+        if (!q) return {};
+        const meta = {
+            title: getFirstDefined(q?.metadata?.title, q?.name, q?.contextTrack?.metadata?.title) || "",
+            artist_name: getFirstDefined(
+                q?.metadata?.artist_name,
+                Array.isArray(q?.artists) ? q.artists.map(a => a?.name).filter(Boolean).join(", ") : undefined,
+                Array.isArray(q?.contextTrack?.artists) ? q.contextTrack.artists.map(a => a?.name).filter(Boolean).join(", ") : undefined,
+                q?.artist
+            ) || "",
+            album_title: getFirstDefined(q?.metadata?.album_title, q?.album?.name, q?.contextTrack?.album?.name, "") || "",
+            duration: Number(getFirstDefined(q?.metadata?.duration, q?.duration, q?.contextTrack?.metadata?.duration, 0)) || 0,
+            image_url: getFirstDefined(
+                q?.metadata?.image_url,
+                q?.image_url,
+                q?.image,
+                (Array.isArray(q?.album?.images) && q.album.images[0]?.url),
+                (Array.isArray(q?.images) && q.images[0]?.url)
+            ) || ""
+        };
+        return meta;
+    }
+
+    function toUri(q) {
+        return getFirstDefined(q?.uri, q?.contextTrack?.uri, q?.context_uri);
+    }
+
+    async function getQueue() {
+        try {
+            if (Spicetify.Queue && Array.isArray(Spicetify.Queue.nextTracks)) {
+                return Spicetify.Queue.nextTracks;
+            }
+        } catch {}
+        try {
+            const resp = await Spicetify.Platform.PlayerAPI.getQueue();
+            return resp?.queue || [];
+        } catch {
+            return [];
+        }
+    }
+
+    function getCache() {
+        try {
+            const raw = Spicetify.LocalStorage.get("lyrics-plus:cache");
+            return raw ? JSON.parse(raw) : {};
+        } catch {
+            return {};
+        }
+    }
+    function saveCache(cache) {
+        Spicetify.LocalStorage.set("lyrics-plus:cache", JSON.stringify(cache));
+    }
+    function cacheLyricsForUri(uri, lyricsArray) {
+        if (!uri || !Array.isArray(lyricsArray) || !lyricsArray.length) return;
+        const cache = getCache();
+        cache[uri] = { lyrics: lyricsArray, timestamp: Date.now() };
+        saveCache(cache);
+    }
+
+    function parseLRC(lrcText) {
+        if (!lrcText) return null;
+        const lines = String(lrcText).split("\n");
+        const parsed = [];
+        for (const line of lines) {
+            const m = line.match(/\[(\d{2}):(\d{2})[.:](\d{2,3})\](.*)/);
+            if (m) {
+                const [, min, sec, ms, text] = m;
+                const t = parseInt(min, 10) * 60000 + parseInt(sec, 10) * 1000 + parseInt(String(ms).padEnd(3, "0"), 10);
+                parsed.push({ time: t, text: (text || "").trim() || "♪" });
+            }
+        }
+        return parsed.length ? parsed.sort((a,b)=>a.time-b.time) : null;
+    }
+
+    async function silentFetchAndCache(queueItem) {
+        try {
+            const uri = toUri(queueItem);
+            if (!uri) return;
+            const existing = getCache();
+            if (existing[uri]?.lyrics?.length) return;
+            const meta = toMetaFromQueueItem(queueItem);
+            if (!meta.title || !meta.artist_name) return;
+            const url = `https://lrclib.net/api/get?track_name=${encodeURIComponent(meta.title)}&artist_name=${encodeURIComponent(meta.artist_name)}&album_name=${encodeURIComponent(meta.album_title)}&duration=${Math.round(meta.duration/1000)}`;
+            const resp = await Spicetify.CosmosAsync.get(url);
+            let parsed = null;
+            if (resp?.syncedLyrics) parsed = parseLRC(resp.syncedLyrics);
+            if (!parsed && resp?.plainLyrics) {
+                const lines = String(resp.plainLyrics).split("\n").map((t,i)=>({time:i*2000,text:t||"♪"}));
+                if (lines.length) parsed = lines;
+            }
+            if (parsed?.length) cacheLyricsForUri(uri, parsed);
+        } catch {}
+    }
+
+    async function prefetchQueueLyricsSilently() {
+        try {
+            const queue = await getQueue();
+            for (const item of queue) {
+                await silentFetchAndCache(item);
+                await new Promise(r => setTimeout(r, 150));
+            }
+        } catch {}
+    }
+
+    if (typeof window.fetchLyrics === "function" && !window.fetchLyrics.__lp_prefetchHooked) {
+        const _orig = window.fetchLyrics;
+        window.fetchLyrics = async function(...args) {
+            const r = await _orig.apply(this, args);
+            prefetchQueueLyricsSilently();
+            return r;
+        };
+        window.fetchLyrics.__lp_prefetchHooked = true;
+    }
+    try { Spicetify.Player.addEventListener("songchange", prefetchQueueLyricsSilently); } catch {}
+
+    function isFullscreenVisible() {
+        const el = document.getElementById("lyrics-plus-fullscreen-container");
+        return !!(el && el.classList.contains("visible"));
+    }
+
+    function ensureUpNextUI() {
+        let el = document.getElementById("lyrics-plus-upnext");
+        if (!el) {
+            el = document.createElement("div");
+            el.id = "lyrics-plus-upnext";
+            el.style.position = "fixed";
+            el.style.top = "80px";
+            el.style.right = "20px";
+            el.style.background = "rgba(0,0,0,0.8)";
+            el.style.backdropFilter = "blur(6px)";
+            el.style.borderRadius = "14px";
+            el.style.padding = "10px 12px";
+            el.style.alignItems = "center";
+            el.style.gap = "10px";
+            el.style.color = "white";
+            el.style.fontSize = "14px";
+            el.style.maxWidth = "360px";
+            el.style.zIndex = "10010";
+            el.style.boxShadow = "0 6px 24px rgba(0,0,0,0.4)";
+            el.style.pointerEvents = "none";
+            el.style.opacity = "0";
+            el.style.transition = "opacity 0.4s ease-in-out";
+
+            const icon = document.createElement("div");
+            icon.id = "lyrics-plus-upnext-icon";
+            icon.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M3 6h13v2H3V6zm0 5h13v2H3v-2zm0 5h9v2H3v-2zm14-4l5 4-5 4v-8z"/></svg>';
+            icon.style.opacity = "0.9";
+            icon.style.flexShrink = "0";
+
+            const img = document.createElement("img");
+            img.id = "lyrics-plus-upnext-img";
+            img.style.width = "46px";
+            img.style.height = "46px";
+            img.style.borderRadius = "8px";
+            img.style.objectFit = "cover";
+            img.style.flexShrink = "0";
+            img.alt = "Cover Art";
+
+            const wrap = document.createElement("div");
+            wrap.style.overflow = "hidden";
+            wrap.style.display = "flex";
+            wrap.style.flexDirection = "column";
+
+            const label = document.createElement("div");
+            label.textContent = "UP NEXT";
+            label.style.opacity = "0.8";
+            label.style.fontSize = "11px";
+            label.style.letterSpacing = "0.06em";
+
+            const title = document.createElement("div");
+            title.id = "lyrics-plus-upnext-title";
+            title.style.fontWeight = "700";
+            title.style.whiteSpace = "nowrap";
+            title.style.overflow = "hidden";
+            title.style.textOverflow = "ellipsis";
+
+            const artist = document.createElement("div");
+            artist.id = "lyrics-plus-upnext-artist";
+            artist.style.opacity = "0.9";
+            artist.style.whiteSpace = "nowrap";
+            artist.style.overflow = "hidden";
+            artist.style.textOverflow = "ellipsis";
+
+            wrap.appendChild(label);
+            wrap.appendChild(title);
+            wrap.appendChild(artist);
+
+            el.appendChild(icon);
+            el.appendChild(img);
+            el.appendChild(wrap);
+            document.body.appendChild(el);
+        }
+        return el;
+    }
+
+    async function updateUpNextOverlay() {
+        const el = ensureUpNextUI();
+        try {
+            if (!isFullscreenVisible()) { el.style.opacity = "0"; return; }
+
+            const data = Spicetify.Player?.data;
+            const duration = Number(data?.duration || 0);
+            if (!duration) { el.style.opacity = "0"; return; }
+
+            const progress = Spicetify.Player.getProgress();
+            const remaining = duration - progress;
+            if (remaining > 15000) { el.style.opacity = "0"; return; }
+
+            const queue = await getQueue();
+            const next = queue?.[0];
+            if (!next) { el.style.opacity = "0"; return; }
+
+            const meta = toMetaFromQueueItem(next);
+            const img = el.querySelector("#lyrics-plus-upnext-img");
+            const title = el.querySelector("#lyrics-plus-upnext-title");
+            const artist = el.querySelector("#lyrics-plus-upnext-artist");
+
+            if (img) {
+                img.src = meta.image_url || "";
+                img.style.display = meta.image_url ? "block" : "none";
+            }
+            if (title) title.textContent = meta.title || "";
+            if (artist) artist.textContent = meta.artist_name || "";
+
+            el.style.opacity = "1";
+        } catch {
+            el.style.opacity = "0";
+        }
+    }
+
+    try {
+        Spicetify.Player.addEventListener("onprogress", () => updateUpNextOverlay());
+        Spicetify.Player.addEventListener("songchange", () => updateUpNextOverlay());
+    } catch {}
+})();
+/* ===== End of addon ===== */
