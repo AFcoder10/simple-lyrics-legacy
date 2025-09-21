@@ -12,6 +12,7 @@ A Spicetify extension that displays synced lyrics in customizable layouts for Sp
 ![PREVIEW](screenshot.png)
 
 ## Whole new revamp of the extension is coming soon!
-![PREVIEW](sneakpeak.gif)Sneak Peak
+![PREVIEW](sneakpeak.gif)Sneak Peak of the future update
+
 
 
